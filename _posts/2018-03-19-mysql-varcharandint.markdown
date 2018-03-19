@@ -3,7 +3,7 @@ layout: post
 title:  "MySQL的varchar字段查询时的一点问题"
 date:   2018-3-19 18:36:35
 categories: MySQL
-tags: MySQL
+tags: MySQL 排错记录
 excerpt: 为什么varchar查询时给一个int值会出现诡异的现象
 mathjax: true
 ---
