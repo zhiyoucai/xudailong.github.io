@@ -12,7 +12,7 @@ mathjax: true
 
 可以将磁盘的缓冲区理解成一个简单的模型--由数据块组成的一片区域，数据块（block/page）默认大小是16KB。那么现在可以画出一个好理解的模型出来了：
 
-![缓冲池](https://images2015.cnblogs.com/blog/352291/201606/352291-20160608195507715-1295084137.png)
+![缓冲池](https://ws1.sinaimg.cn/large/5fec9ab7ly1fpiym9izkej20ga0a8jr6.jpg)
 
 这里的每一个格子都代表一个page。在代码里这个区域有两个关键的数据结构：buf_pool_struct和buf_block_struct。其中buf_pool_struct是缓冲池的数据结构，buf_block_struct是数据块的数据结构。
 
@@ -20,7 +20,7 @@ mathjax: true
 
 LRU是一个经典的算法，全称是最近最少使用（Lastest Least Used）。使用最频繁的页总是在链表的前面，而最后的页就是要被释放掉的页。然而InnoDB没有采用这种大路货，而是另辟蹊径的搞了个改进版的LRU，有人管他叫做midpoint LRU，是这样的：
 
-![链表](https://images2015.cnblogs.com/blog/352291/201606/352291-20160608200758027-611737549.png)
+![链表](https://ws1.sinaimg.cn/large/5fec9ab7ly1fpiym9lo27j20p706fjr7.jpg)
 
 InnoDB的主要改进点在于每次将磁盘上读出的数据不是直接放到链表的头部，而是放在链表的3/8处（该值可配置），只有在下次访问该页时，才会将该页移动到链表头部。这样改进的原因在《MySQL内核--InnoDB存储引擎》一书中有论述（p250）。这个链表就被分为了两部分，midpoint前叫做young list，midpoint后叫做old list。链表尾部的数据块会被释放掉，buf_LRU_search_and_free_block函数会完成这个操作：
 
