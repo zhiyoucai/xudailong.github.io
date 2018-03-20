@@ -1,0 +1,77 @@
+---
+layout: post
+title:  "MySQL唯一约束不加非空约束带来的问题"
+date:   2018-3-19 18:36:35
+categories: MySQL
+tags: MySQL
+excerpt: 我发现了一个问题，唯一键列竟然接受了很多相同的null值
+mathjax: true
+---
+
+新建一张表：
+
+```sql
+create table test
+(
+id int primary key auto_increment, 
+uname varchar(10), 
+grade int, 
+unique key (uname)
+);
+```
+
+执行插入命令：
+
+```sql
+insert into test select 0, 'Li', 1;
+insert into test select 0, 'Wang', 2;
+insert into test select 0, null, 2;
+insert into test select 0, null, 2;
+insert into test select 0, null, 2;
+```
+
+这些完全执行成功，查询得到结果如下：
+
+![](https://ws1.sinaimg.cn/large/5fec9ab7ly1fpj0fimnu7j206f05jq2r.jpg)
+
+虽然uname作为唯一键，但是MySQL应该没有进行null值的比较，因此反复插入是可以的。
+
+**结论：一定要在唯一键的列上加not null约束**
+
+InnoDB的辅助索引是要保存索引键值和主键值的，但是索引并不保存null值，因此可以推断这种SQL是不会被索引覆盖的：
+
+```sql
+select uname from test where uname is null;
+```
+
+这是执行计划：
+
+![](https://ws1.sinaimg.cn/large/5fec9ab7ly1fpj0fif4hvj20u003adfr.jpg)
+
+有一个回表操作，而这种SQL：
+
+```sql
+select uname from test where uname = 'Li';
+```
+
+执行计划：
+
+![](https://ws1.sinaimg.cn/large/5fec9ab7ly1fpj0fic4cwj20rf038wee.jpg)
+
+是可以被索引覆盖的，少了一次回表检索。
+
+使用null值是危险的，很多时候很多人写SQL喜欢这样：
+
+```sql
+select count(uname) from test;
+```
+但是MySQL会自动忽略null对应的行
+
+![](https://ws1.sinaimg.cn/large/5fec9ab7ly1fpj0fii12bj20a803ka9u.jpg)
+
+
+其实这种语句已经被查询优化器进行了优化，直接在辅助索引上完成，没有回表操作：
+
+![](https://ws1.sinaimg.cn/large/5fec9ab7ly1fpj0fipqmhj20ra036t8m.jpg)
+
+**结论：有唯一索引的列，一定要not null约束，并且给一个默认值**
