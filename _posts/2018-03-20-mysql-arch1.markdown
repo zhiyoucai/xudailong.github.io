@@ -3,7 +3,7 @@ layout: post
 title:  "MySQL唯一约束不加非空约束带来的问题"
 date:   2018-3-19 18:36:35
 categories: MySQL
-tags: MySQL
+tags: MySQL 排错
 excerpt: 我发现了一个问题，唯一键列竟然接受了很多相同的null值
 mathjax: true
 ---
