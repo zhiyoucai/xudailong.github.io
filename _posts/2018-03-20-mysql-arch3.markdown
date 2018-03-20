@@ -1,0 +1,167 @@
+---
+layout: post
+title:  "boneCP内存溢出分析"
+date:   2018-3-20 10:11:32
+categories: MySQL Java
+tags: MySQL Java
+excerpt: 一款连接池产品竟然反复出现内存溢出...
+mathjax: true
+---
+
+# boneCP连接的实现
+
+boneCP自己实现了标准的java.sql.Connection接口，除了会持有Connection对象之外，还会拥有一些属性用于标记连接的创建时间，空闲时间等。
+
+比较重要的时间概念代码如下：
+```
+if (!recreating){
+  //上次使用时间戳
+    connectionLastUsedInMs = System.currentTimeMillis();
+  //上次重置时间戳
+  connectionLastResetInMs = System.currentTimeMillis();
+  //连接创建时间
+  connectionCreationTimeInMs = System.currentTimeMillis();
+}
+```
+# boneCP对连接的管理
+
+MySQL对连接有最大空闲时间的限制，默认是8小时，因此连接池在将连接分配给客户端时，应该保证连接的可用性。
+
+一般会有两种做法：分配时测试和定时测试。
+
+分配时测试：在收到客户端请求时，连接池首先对向数据库发送一条简单的SQL，判断连接是否可用。
+
+定时测试：启动一个测试线程（ConnectionTesterThread），定时每隔一段时间向数据库发送命令，判断连接是否可用。
+
+boneCP采用定时测试的方式保证连接的可用。为了实现该方式，boneCP规定了两个重要的参数：idleConnectionTestPeriodInSeconds（默认4小时）和idleMaxAgeInSeconds（默认1小时），分别表示空闲连接探测周期和连接最大可空闲时间。
+
+默认情况下，boneCP启动的keepalive线程每个1小时会启动一次，用于检查连接是否达到了空闲时间的上限：
+
+代码片段1：
+
+```
+if (connection.isPossiblyBroken() || 
+	((this.idleMaxAgeInMs > 0) && ( System.currentTimeMillis()-connection.getConnectionLastUsedInMs() > this.idleMaxAgeInMs))){
+	// kill off this connection - it's broken or it has been idle for too long
+	closeConnection(connection);
+	continue;
+}
+```
+
+如果一个线程距离上次使用已经过去了1小时以上，则会在这段逻辑中被close掉，然后继续循环扫描其他的连接。
+
+一个连接被close掉之后，boneCP会有其他的线程负责新建连接。因此表现在MySQL客户端上，可以看到每隔1小时，就会关闭一些连接并出现一些新的连接（极端情况下，所有的连接都被关闭，并一次性重建所有连接）。注意新建连接的MySQL分配id和旧连接完全不同，这也就意味着JVM中出现了新的对象。
+
+需要注意的是，在默认情况下，并没有观察到逻辑执行到这里的现象：
+
+代码片段2：
+
+```
+if (this.idleConnectionTestPeriodInMs > 0 && (currentTimeInMs-connection.getConnectionLastUsedInMs() > this.idleConnectionTestPeriodInMs) &&
+	(currentTimeInMs-connection.getConnectionLastResetInMs() >= this.idleConnectionTestPeriodInMs)) {
+	// send a keep-alive, close off connection if we fail.
+	if (!this.pool.isConnectionHandleAlive(connection)){
+		closeConnection(connection);
+		continue; 
+	}
+	// calculate the next time to wake up
+	tmp = this.idleConnectionTestPeriodInMs;
+	if (this.idleMaxAgeInMs > 0){ // wake up earlier for the idleMaxAge test?
+		tmp = Math.min(tmp, this.idleMaxAgeInMs);
+		}
+}
+```
+
+这段逻辑主要判断是否有连接的上一次重置时间距现在超过4小时，如果有，则向MySQL发一个探测命令，并且将连接的最后一次重置时间设为当前时间，如果连接alive，返回true，不对连接进行close操作。
+
+上一段代码也是ConnectionTesterThread的逻辑，推断应该是因为每隔1小时，连接就会被关闭重建一次，因此不会存在满足这段逻辑条件的连接存在。
+
+如果修改默认值，将idleConnectionTestPeriodInSeconds和idleMaxAgeInSeconds的值对调，那么boneCP仍会每隔1小时（即idleConnectionTestPeriodInSeconds时间）定时调度keepalive线程。
+
+此时可以发现上述两段逻辑都会被执行，每次执行的时候，都会首先执行代码片段2中的逻辑，因此每次都会更新ConnectionHandler的最后一次重置时间，但是连接仍然不会生存超过4小时，每4小时，逻辑就会进入代码片段1中，将连接close掉。
+
+# jdbc驱动的NonRegistingDriver分析
+
+从内存分析上看，大部分内存都被com.mysql.jdbc.NonRegistingDriver占去。通过跟踪jdbc代码发现，当connection建立的时候，jdbc总会将该connection交给NonRegistingDriver，建立一个虚引用，并将该虚引用放在一个ConcurrentHashMap中。
+
+代码片段3：
+
+```
+protected static void trackConnection(Connection newConn) {
+    ConnectionPhantomReference phantomRef = new ConnectionPhantomReference((ConnectionImpl) newConn, refQueue);
+    connectionPhantomRefs.put(phantomRef, phantomRef);
+}
+```
+
+内存分析中发现很多内存正是被NonRegistingDriver中的ConcurrentHashMap占去，因此可以推断，应该是新建了大量的Connection导致了大量的NonRegistingDriver对象被新建，从而引发了内存问题。
+
+综合上面对boneCP的分析，应该是boneCP定时的将连接close掉再重建导致的，如果在不是很繁忙的系统上，该情况应该会比较严重。
+
+# boneCP探测连接可用的方式
+
+在没有设置探测SQL的情况下，boneCP利用jdbc的getMetaData方法，获取connection的元数据，从其Javadoc上看，元数据应该包括了数据库的表，SQL语法，存储过程等等信息：
+
+>The metadata includes information about the database's tables, its supported SQL grammar, its stored procedures, the capabilities of this connection, and so on.
+
+经过抓包分析，实际上getMetaData方法向MySQL 发送了一条简单的show tables命令，如果收到response则认为连接是alive的。
+
+# 问题的解决
+
+如果将idleMaxAgeInSeconds的值调大，则可以降低连接被关闭的频率，也就同时降低了对象新建的频率。
+
+另外，我在bonecp的ConnectionHandler类中添加了一个属性，用于判断单位时间（即一个探测时间段）内connection被使用的次数，如果该值小于设定值（默认为10次），则认为该连接很闲，此时会检查一次连接是否存活，并将连接的上次使用时间connectionLastUsedInMs重置为当前时间，让该connection一直存在状态而不会被代码片段1的逻辑close掉。
+
+代码片段4中是探测线程ConnectionTesterThread内判断connection是否空闲的逻辑。
+
+代码片段4：
+
+```
+//每个检测间隔内，如果连接被使用次数小于10次，则认为系统很空闲，检查连接是否可用，并重置时间
+if (connection.getConnectionUsedCounts() <= this.idleThreshold) {
+	if (!this.pool.isConnectionHandleAliveAndReuse(connection)) {
+		closeConnection(connection);
+		continue;
+	}
+}
+```
+
+代码片段5：
+
+```
+public boolean isConnectionHandleAliveAndReuse(ConnectionHandle connection) {
+		Statement stmt = null;
+		boolean result = false;
+		boolean logicallyClosed = connection.logicallyClosed.get();
+		try {
+			connection.logicallyClosed.compareAndSet(true, false); // avoid checks later on if it's marked as closed.
+			String testStatement = this.config.getConnectionTestStatement();
+			ResultSet rs = null;
+
+			if (testStatement == null) {
+				// Make a call to fetch the metadata instead of a dummy query.
+				rs = connection.getMetaData().getTables( null, null, KEEPALIVEMETADATA, METADATATABLE );
+			} else {
+				stmt = connection.createStatement();
+				stmt.execute(testStatement);
+			}
+
+
+			if (rs != null) {
+				rs.close();
+			}
+
+			result = true;
+		} catch (SQLException e) {
+			// connection must be broken!
+			result = false;
+		} finally {
+			connection.logicallyClosed.set(logicallyClosed);
+			connection.setConnectionLastUsedInMs(System.currentTimeMillis());
+			connection.setConnectionUsedCounts(0);
+			result = closeStatement(stmt, result);
+		}
+		return result;
+}
+```
+
+经过简单的测试，没有发现原先出现的内存溢出问题，而每个时间间隔内都能避免代码片段1中的逻辑close连接，间接证明了之前关于内存溢出原因的推断。
