@@ -1,0 +1,125 @@
+---
+layout: post
+title:  "bonecp回缩连接池功能的实现"
+date:   2018-3-20 10:11:32
+categories: MySQL Java
+tags: MySQL Java
+excerpt: 我们在使用boneCP的过程中发现总是会出现fullGC，原因竟然是因为......
+mathjax: true
+---
+
+# 起因
+
+bonecp不具备回缩功能，即连接池持有连接之后，不会主动去释放这些连接（即使这些连接始终处于空闲状态），因此在使用一段时间之后，连接池会达到配置的最大值。
+
+这种方式一定程度上造成了资源的浪费。
+
+# 改造
+
+参考tomcat-jdbc的策略，每隔一段时间（可配置）会启动定时任务扫描partition中的idle队列，判断idle连接数是否大于partition可持有的最小连接数，如果是，则启动清理方法，将连接释放掉。
+
+为了达到这个目的，实现了ConnectionCleanThread类：
+
+```
+package com.jolbox.bonecp;
+
+import java.sql.SQLException;
+import java.util.concurrent.BlockingQueue;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class ConnectionCleanThread implements Runnable {
+
+	private static final Logger logger = LoggerFactory.getLogger(ConnectionCleanThread.class);
+	
+	private ConnectionPartition partition;
+	
+	private BoneCP pool;
+	
+	protected ConnectionCleanThread(ConnectionPartition connectionPartition, BoneCP pool) {
+		this.partition = connectionPartition;
+		this.pool = pool;
+	}
+	
+	@Override
+	public void run() {
+		BlockingQueue<ConnectionHandle> freeQueue = null;
+		ConnectionHandle connection = null;
+		//获得partition的大小
+		int partitionSize = this.partition.getAvailableConnections();
+		for (int i = 0; i < partitionSize; i++) {
+			//得到free连接的queue
+			freeQueue = this.partition.getFreeConnections();
+			//如果空闲连接大于partition的最小允许连接数,回缩到最小允许连接数
+			while (freeQueue.size() > this.partition.getMinConnections()) {
+				connection = freeQueue.poll();
+				connection.lock();
+				closeConnection(connection);
+				connection.unlock();
+			}
+		}
+	}
+	
+	/** Closes off this connection
+	 * @param connection to close
+	 */
+	private void closeConnection(ConnectionHandle connection) {
+
+		if (connection != null && !connection.isClosed()) {
+			try {
+				connection.internalClose();
+			} catch (SQLException e) {
+				logger.error("Destroy connection exception", e);
+			} finally {
+				this.pool.postDestroyConnection(connection);
+				connection.getOriginatingPartition().getPoolWatchThreadSignalQueue().offer(new Object()); // item being pushed is not important.
+			}
+		}
+	}
+
+}
+
+```
+
+同时需要对核心类ConnectionHandle进行改造，加上连接的上锁方法：
+
+```
+protected void lock() {
+	lock.writeLock().lock();
+}
+	
+protected void unlock() {
+	lock.writeLock().unlock();
+}
+```
+
+在BoneCP类的构造器内加上该线程的定时任务：
+
+```
+/**
+ * 空闲连接清理任务
+*/
+private ScheduledExecutorService connectionCleanScheduler;
+
+...
+
+this.connectionCleanScheduler = Executors.newScheduledThreadPool(this.config.getPartitionCount(), new CustomThreadFactory("BoneCP-connection-clean-thread"+suffix, true));
+
+...
+
+//定期启动一个线程清理空闲连接
+//add 2017-2-10
+final Runnable connectionCleaner = new ConnectionCleanThread(connectionPartition, this);
+this.connectionCleanScheduler.scheduleAtFixedRate(connectionCleaner, this.config.getConnectionCleanTimeInSeconds(), this.config.getConnectionCleanTimeInSeconds(), TimeUnit.SECONDS);
+```
+
+# 效果
+
+经过实际测试，可以在后台自动的回收idle连接。
+
+现在只是实现了功能，各种情况暂时没有加入考虑，比如没有判断该连接是否应该被释放。
+
+# GitHub地址
+
+[bonecp](https://github.com/zhiyoucai/bonecp.git)
