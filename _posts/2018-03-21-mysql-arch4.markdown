@@ -1,0 +1,59 @@
+---
+layout: post
+title:  "不好的存储过程编写习惯"
+date:   2018-3-21 08:10:35
+categories: MySQL 
+tags: MySQL 
+excerpt: 循环插入10万数据，竟然等到花儿都谢了，这是为什么？
+mathjax: true
+---
+
+刚才为了测试一个东西，写了个存储过程：  
+
+```sql
+delimiter $$
+
+drop procedure if exists sp_test$$
+
+create procedure sp_test()
+begin
+  declare v_cnt int;
+  set v_cnt = 0;
+  while v_cnt < 100000
+  do
+    insert into t1 select v_cnt, v_cnt+1, v_cnt+2, v_cnt+3;
+    set v_cnt = v_cnt + 1;
+  end while; 
+end $$
+
+delimiter ;
+```
+
+很简单的一个过程，想要给表里插入10万条数据而已，但是实际执行过程中发现耗时很长，五分钟过去了还是没有执行完毕，于是我就把过程停掉了。又看了一遍过程我发现自己犯了一个曾经反复和别人强调过的错误，这种插入数据的过程，一定不要在循环中提交事务。MySQL默认是自动提交事务的，这一点众所周知，于是我的过程里每一条插入结束后都会自动将数据提交，于是每次提交都会写一次redo，于是我这个要写10万次redo，这个开销实在是很大很大的，于是我将过程做了简单的修改：
+
+```sql
+delimiter $$
+
+drop procedure if exists sp_test$$
+
+create procedure sp_test()
+begin
+  declare v_cnt int;
+  set v_cnt = 0;
+  start transaction;
+  while v_cnt < 100000
+  do
+    insert into t1 select v_cnt, v_cnt+1, v_cnt+2, v_cnt+3;
+    set v_cnt = v_cnt + 1;
+  end while; 
+  commit;
+end $$
+
+delimiter ;
+```
+
+这样的操作竟然只需要15s就完成了10万数据的插入。
+
+这里还要多说一个条件，此时我的innodb_flush_log_at_trx_commit参数设置是1，就是每次commit就会将redo buffer中的在脏页刷到OS cache中并直接将OS cache刷入磁盘中，这是最慢的方式。如果将这个参数改为2，那么这个存储过程执行时间将会更短。
+
+效果非常好。顺便说一句，头一次写的那个过程还有一个问题，比如说我刚才不耐烦的将terminal关掉了，但是我根本不知道我关掉的时候过程执行到哪里去了，比如我们有时候执行的时候发生了什么不可预知的错误，那么我们也就不知道现在执行到什么位置了。因此不要在循环中自动提交事务，要显式的开启事务。
