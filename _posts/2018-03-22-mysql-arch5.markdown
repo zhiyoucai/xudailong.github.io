@@ -1,0 +1,63 @@
+---
+layout: post
+title:  "InnoDB索引覆盖浅析"
+date:   2018-3-22 12:11:40
+categories: MySQL 
+tags: MySQL 
+excerpt: 索引覆盖这种好东西，怎么能不了解下呢
+mathjax: true
+---
+
+# 索引覆盖
+
+以查目录为例，我现在只想抄下来《红楼梦》的目录名称，这个时候我只需要在目录上扫描一遍即可，而不需要根据目录中的页码，再翻到那一页去，因为《红楼梦》的目录是这样的：
+
+> 第四回    薄命女偏逢薄命郎  葫芦僧乱判葫芦案 -------------------------------------------------------- 100
+
+索引覆盖是一样的道理，InnoDB的辅助索引（区别于主键索引）上存放了索引列的值和主键值，如果要查询的列恰好在索引中，则无需根据主键值回到表中再检索一次。
+
+例如这张表：
+
+```sql
+create table test
+(
+    id int primary key auto_increment,
+    page int,
+    title varchar(10),
+    content text
+);
+alter table test add index (page, title);
+```
+
+这样表就相当于上面《红楼梦》的目录，下面这种查询就会进行索引覆盖：
+
+```sql
+select page, title from test;
+```
+
+![](http://wx3.sinaimg.cn/large/5fec9ab7ly1fplh0ge56gj20mt047gm3.jpg)
+
+
+这种查询直接从辅助索引中返回结果，不会再次回表检索，IO成本低。
+
+但是下面这种查询就要回表检索：
+
+![](http://wx3.sinaimg.cn/mw690/5fec9ab7ly1fplgzo2p4ej20m7042t95.jpg)
+
+这是因为content并不在辅助索引中，因此，需要在辅助索引中找到相关的主键，用主键再次检索聚簇索引，两次IO，成本较高。
+
+# 索引对聚合操作的优化
+
+InnoDB在进行count时，优先寻找辅助索引：
+
+![](http://wx1.sinaimg.cn/mw690/5fec9ab7ly1fplgq5tix9j20nn054t9a.jpg)
+
+可以看到，实际上这句SQL利用到了辅助索引，这样可以直接从辅助索引上拿到结果，不需要再去遍历聚簇索引，这是因为辅助索引的规模比聚簇索引小的多，扫描成本很低。
+
+但是在一个没有辅助索引的表上：
+
+![](http://wx3.sinaimg.cn/mw690/5fec9ab7ly1fplgpqwl18j20n504ugm8.jpg)
+
+只能进行全表扫描。
+
+在一个有辅助索引的表上，不管写count(*)还是count(1)，优化器都会选择辅助索引进行统计，因此这两种写法本身并没有优劣之别；在没有辅助索引的表上，这两种写法都会遍历聚簇索引，IO成本是一样的。
