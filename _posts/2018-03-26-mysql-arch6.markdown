@@ -1,0 +1,120 @@
+---
+layout: post
+title:  "MySQL Group Replication(MGR)安装记录"
+date:   2018-3-26 15:54:49
+categories: MySQL
+tags: MySQL Replication
+excerpt: MySQL官方的集群，也是未来的趋势
+mathjax: true
+---
+
+## 环境
+
+CentOS 7
+
+MySQL 5.7.20
+
+|节点|角色|
+|--|--|
+|192.168.150.131|primary|
+|192.168.150.134|secondary|
+|192.168.150.135|secondary|
+
+***注：这里的角色名称我采用了MongoDB的叫法***
+
+## 安装MySQL5.7
+
+具体的安装过程不再赘述，需要注意的是一定要开启GTID功能，且一定将binlog的格式设置为ROW。
+
+所有的节点上都要安装组复制插件：
+
+INSTALL PLUGIN group_replication SONAME 'group_replication.so';
+
+## 配置MGR
+
+### primary节点配置
+
+以下的配置写入my.cnf中：
+
+```bash
+## group replication
+transaction_write_set_extraction = XXHASH64
+## 这里随机生成一个UUID，一定要是UUID
+loose-group_replication_group_name = "9ac06b4e-13aa-11e7-a62e-5254004347f9"
+loose-group_replication_start_on_boot = off
+## 这是本机的IP，同时找一个端口
+loose-group_replication_local_address = "192.168.150.131:23306"
+## 这里是群组的所有机器
+loose-group_replication_group_seeds = "192.168.150.131:23306,192.168.150.134:23307,192.168.150.135:23308"
+loose-group_replication_bootstrap_group = off
+## 这两个选项配置单主模式
+loose-group_replication_single_primary_mode = true
+loose-group_replication_enforce_update_everywhere_checks = false
+
+binlog_checksum=none
+```
+
+重启MySQL，执行下面的命令：
+
+```sql
+SET SQL_LOG_BIN=0;
+grant replication slave on *.* to repl@'%' identified by 'repl';
+change master to master_user='repl',master_password='repl' for channel 'group_replication_recovery';
+set global group_replication_bootstrap_group=ON;
+start group_replication;
+```
+
+此时可以查询这个表观察：
+
+```sql
+select * from performance_schema.replication_group_members;
+```
+
+结果如下：
+
+![](http://wx3.sinaimg.cn/large/5fec9ab7ly1fpqa6o5p4wj20p802ra9z.jpg)
+
+### secondary设置
+
+配置文件中加入：
+
+```bash
+## group replication
+transaction_write_set_extraction = XXHASH64
+## 这里随机生成一个UUID，一定要是UUID
+loose-group_replication_group_name = "9ac06b4e-13aa-11e7-a62e-5254004347f9"
+loose-group_replication_start_on_boot = off
+## 这是本机的IP，同时找一个端口
+loose-group_replication_local_address = "192.168.150.131:23306"
+## 这里是群组的所有机器
+loose-group_replication_group_seeds = "192.168.150.131:23306,192.168.150.134:23307,192.168.150.135:23308"
+loose-group_replication_bootstrap_group = off
+## 这两个选项配置单主模式
+loose-group_replication_single_primary_mode = true
+loose-group_replication_enforce_update_everywhere_checks = false
+
+binlog_checksum=none
+```
+
+执行这些命令：
+
+```sql
+SET SQL_LOG_BIN=0;
+grant replication slave on *.* to repl@'%' identified by 'repl';
+change master to master_user='repl',master_password='repl' for channel 'group_replication_recovery';
+start group_replication;
+```
+
+查看：
+
+```sql
+select * from performance_schema.replication_group_members;
+```
+
+此时如果一切正常，会显示三个节点。
+
+## 结束
+
+在primary节点上新建一个数据库，新建一张表，插入一些数据测试一下，正常的情况下所有的节点应该都有这些测试数据。
+
+MGR看起来感觉和Gelera差不多，但是这是MySQL官方支持的，代表着MySQL未来的发展方向。可以预测未来Oracle应该会主键的将重点转换到MGR上，而主从复制的方式将逐渐被淘汰。
