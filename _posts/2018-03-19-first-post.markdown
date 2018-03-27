@@ -32,18 +32,19 @@ InnoDB采用Next-Key Lock解决幻读问题。
 
 ```sql
 CREATE TABLE `test` (
-  `id` int(11) DEFAULT NULL,
-  KEY `id` (`id`)
+  `id` int(11) primary key auto_increment,
+  `xid` int,
+  KEY `xid` (`xid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
-insert into test values (1), (3), (5), (8), (11);
+insert into test(xid) values (1), (3), (5), (8), (11);
 ```
 
-注意，这里id上是有索引的，因为该算法总是会去锁住索引记录。
+注意，这里xid上是有索引的，因为该算法总是会去锁住索引记录。
 
 现在，该索引可能被锁住的范围如下：
 
-(-∞, 1], (1, 3], (3, 5], (5, 8], (8, 11], (11, +∞)
+(-∞, 1), [1, 3), [3, 5), [5, 8), [8, 11), [11, +∞)
 
 根据下面的方式开启事务执行SQL：
 
@@ -60,17 +61,9 @@ insert into test values (1), (3), (5), (8), (11);
 
 Session A执行后会锁住的范围：
 
-(5, 8], (8, 11]
+[5, 8), [8, 11)
 
 除了锁住8所在的范围，还会锁住下一个范围，所谓Next-Key。
-
-Session B执行完第五步，可能的锁范围会变成：
-
-(-∞, 1], (1, 3], (3, 4], (4, 8], (8, 11], (11, +∞)
-
-实际锁住的范围：
-
-(4, 8], (8, 11]
 
 这样，Session B执行到第六步会阻塞，跳过第六步不执行，第七步也会阻塞，但是并不阻塞第八步。
 
