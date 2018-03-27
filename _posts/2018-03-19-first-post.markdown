@@ -26,7 +26,7 @@ InnoDB采用Next-Key Lock解决幻读问题。
 
 # 举例说明
 
-**以下所有的操作都是在Read Repeatable级别下进行测试**
+**以下所有的操作都是在Read Repeatable级别下进行测试，测试版本是MySQL官方5.7.21版本**
 
 新建一张表：
 
@@ -67,4 +67,55 @@ Session A执行后会锁住的范围：
 
 这样，Session B执行到第六步会阻塞，跳过第六步不执行，第七步也会阻塞，但是并不阻塞第八步。
 
-如果id是唯一索引，那么此时Session B的所有步骤中只有第四步和第六步会报唯一键约束错误，其他步骤全都成功。这是因为唯一索引上不采用Next-Key Lock，而是只锁住一行。
+如果id是唯一索引，那么此时Session B的所有步骤中只有第四步和第六步会报唯一键约束错误，其他步骤全都成功。这是因为唯一索引上不采用Next-Key Lock，而是只锁一行。
+
+如果session A执行这个SQL：
+
+```sql
+select * from test where xid = 1 for update;
+```
+
+这个时候的锁定范围是(-∞, 1), [1, 3)
+
+如果Session B执行下面的SQL都会阻塞：
+
+```sql
+insert into test(xid) values (-100);
+insert into test(xid) values (0);
+insert into test(xid) values (1);
+insert into test(xid) values (2);
+```
+
+这些都在上面说的区间内，也印证了我的看法，但是这条SQL开始就不会被阻塞了：
+
+```sql
+insert into test(xid) values (3);
+```
+
+下面来测试一下到正无穷大的是否满足我的理解：
+
+session A执行这个SQL：
+
+```sql
+select * from test where xid = 11 for update;
+```
+
+推断锁定的范围是：[8, 11), [11, +∞)
+
+现在session B执行这些SQL应该都会被阻塞：
+
+```sql
+insert into test(xid) values (8);
+insert into test(xid) values (9);
+insert into test(xid) values (10);
+insert into test(xid) values (11);
+insert into test(xid) values (99999);
+```
+
+但是session B执行这个SQL就不会阻塞：
+
+```sql
+insert into test(xid) values (7);
+```
+
+经过实际测试结果符合我的预期。
