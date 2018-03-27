@@ -26,6 +26,8 @@ InnoDB采用Next-Key Lock解决幻读问题。
 
 # 举例说明
 
+**以下所有的操作都是在Read Repeatable级别下进行测试**
+
 新建一张表：
 
 ```sql
