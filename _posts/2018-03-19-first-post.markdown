@@ -137,6 +137,54 @@ insert into test(xid) values (7);
 
 经过实际测试结果符合我的预期。
 
+再研究一个主键不是自增的例子，这个例子来自何登成的博客，下面有链接，我稍微改动了一下。
+
+首先建表：
+
+```sql
+create table test 
+(
+  uname varchar(10) primary key,
+  xid int,
+  key (xid)
+);
+```
+
+插入数据如下：
+
+```sql
+insert into test(uname, xid) values ('a', 15),('c',10), ('e',6),('g', 10),('m',11),('z',2);
+```
+
+下面Session A试图锁住xid=10：
+
+```sql
+begin;
+select * from test where xid=10 for update;
+```
+
+下面是主键索引和辅助索引的关系示意图：
+
+![](http://wx3.sinaimg.cn/large/5fec9ab7ly1fpsbt4tkv1j20pv0g5wes.jpg)
+
+锁住的范围推断应该是((6,e),(10,c)],((10,c),(10,g)]
+
+因为不是自增主键了，所以情况会稍微麻烦一点，但是有一点原则要把握好就是B+树的连续性不能被破坏，那么可以判断下面的SQL一定被阻塞：
+
+```sql
+-- 因为(10,d)的组合会破坏B+树的连续性，可以自己画图
+insert into test(uname, xid) values ('d', 10);
+
+-- 因为(10,f)组合也会破坏B+树连续性
+insert into test(uname, xid) values ('f', 10);
+
+-- 同理也会阻塞
+insert into test(uname, xid) values ('d', 7);
+insert into test(uname, xid) values ('d', 8);
+insert into test(uname, xid) values ('d', 9);
+```
+
+
 # 参考资料
 
 [1. MySQL 加锁处理分析（何登成）](http://hedengcheng.com/?p=771#_Toc374698316)
