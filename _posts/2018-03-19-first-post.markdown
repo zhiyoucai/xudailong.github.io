@@ -72,11 +72,13 @@ Session A执行后会锁住的范围：
 
 那么先引进一张图：
 
-![](http://wx2.sinaimg.cn/large/5fec9ab7ly1fps9oyh96cj20kt0fv74h.jpg)
+![](http://wx1.sinaimg.cn/large/5fec9ab7ly1fpsanraom2j20lp0gvq35.jpg)
 
 辅助索引中黄色部分是被record lock锁住的行，除此之外还有两个Gap Lock，锁住了我上面说的范围。
 
-先说为什么锁住了5的插入，观察主键索引，主键索引是自增的，因此在id=4这条记录之前，是不允许插入一条xid=5的记录的，这是为了防止幻读的发生，所以阻塞了这条数据的写入。
+先说为什么锁住了5的插入，观察主键索引，主键索引是自增的，因此在id=4这条记录之前，是不允许插入一条xid=5的记录的。
+
+上面说的并不是很能让人信服,什么时候看了源码再说吧，不过记住这个结论能够推断出正确的锁定范围的。
 
 不锁定xid=11的写入还是可以用id是自增的解释，B+树是有序的，并不会阻塞后续的插入。
 
@@ -134,3 +136,11 @@ insert into test(xid) values (7);
 ```
 
 经过实际测试结果符合我的预期。
+
+# 参考资料
+
+[1. MySQL 加锁处理分析（何登成）](http://hedengcheng.com/?p=771#_Toc374698316)
+
+[2. Innodb锁机制：Next-Key Lock 浅谈](https://www.cnblogs.com/zhoujinyi/p/3435982.html)
+
+[3. MySQL Document](https://dev.mysql.com/doc/refman/5.7/en/innodb-locking.html#innodb-next-key-locks)
