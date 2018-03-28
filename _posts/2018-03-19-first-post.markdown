@@ -44,7 +44,7 @@ insert into test(xid) values (1), (3), (5), (8), (11);
 
 现在，该索引可能被锁住的范围如下：
 
-(-∞, 1), [1, 3), [3, 5), [5, 8), [8, 11), [11, +∞)
+(-∞, 1], (1, 3], (3, 5], (5, 8], (8, 11], (11, +∞)
 
 根据下面的方式开启事务执行SQL：
 
@@ -53,19 +53,34 @@ insert into test(xid) values (1), (3), (5), (8), (11);
 |1|begin;||
 |2|select * from test where id = 8 for update;||
 |3||begin;|
-|4||insert into test select 1;|
-|5||insert into test select 4;|
-|6||insert into test select 5;|
-|7||insert into test select 9;|
-|8||insert into test select 12;|
+|4||insert into test(xid) values (1);|
+|5||insert into test(xid) values (4);|
+|6||insert into test(xid) values (5);|
+|7||insert into test(xid) values (9);|
+|8||insert into test(xid) values (11);|
+|9||insert into test(xid) values (12);|
 
 Session A执行后会锁住的范围：
 
-[5, 8), [8, 11)
+(5, 8], (8, 11]
 
 除了锁住8所在的范围，还会锁住下一个范围，所谓Next-Key。
 
-这样，Session B执行到第六步会阻塞，跳过第六步不执行，第七步也会阻塞，但是并不阻塞第八步。
+这样，Session B执行到第六步会阻塞，跳过第六步不执行，第七步也会阻塞，但是并不阻塞第八步，第九步也不阻塞。
+
+上面的结果似乎并不符合预期，因为11这个值看起来就是在(8, 11]区间里，而5这个值并不在(5, 8]这个区间里。
+
+那么先引进一张图：
+
+![](http://wx2.sinaimg.cn/large/5fec9ab7ly1fps9oyh96cj20kt0fv74h.jpg)
+
+辅助索引中黄色部分是被record lock锁住的行，除此之外还有两个Gap Lock，锁住了我上面说的范围。
+
+先说为什么锁住了5的插入，观察主键索引，主键索引是自增的，因此在id=4这条记录之前，是不允许插入一条xid=5的记录的，这是为了防止幻读的发生，所以阻塞了这条数据的写入。
+
+不锁定xid=11的写入还是可以用id是自增的解释，B+树是有序的，并不会阻塞后续的插入。
+
+**因此在判断Next-Key Lock的锁定范围的时候，首先要判断出区间，然后分析，判断区间边缘值是否会被锁定**
 
 如果id是唯一索引，那么此时Session B的所有步骤中只有第四步和第六步会报唯一键约束错误，其他步骤全都成功。这是因为唯一索引上不采用Next-Key Lock，而是只锁一行。
 
@@ -75,7 +90,7 @@ Session A执行后会锁住的范围：
 select * from test where xid = 1 for update;
 ```
 
-这个时候的锁定范围是(-∞, 1), [1, 3)
+这个时候的锁定范围是(-∞, 1], (1, 3]，但是不锁定3
 
 如果Session B执行下面的SQL都会阻塞：
 
@@ -100,7 +115,7 @@ session A执行这个SQL：
 select * from test where xid = 11 for update;
 ```
 
-推断锁定的范围是：[8, 11), [11, +∞)
+推断锁定的范围是：(8, 11], (11, +∞)，锁定8和上述区间内的数据插入
 
 现在session B执行这些SQL应该都会被阻塞：
 
