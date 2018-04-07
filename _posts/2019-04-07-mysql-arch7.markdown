@@ -1,0 +1,136 @@
+---
+layout: post
+title:  "搭建一个测试用的MySQL环境"
+date:   2018-4-7 21:12:18
+categories: MySQL
+tags: MySQL 入门
+excerpt: 经常有小伙伴受困于没有学习的环境，那么今天就教你一个简单的方式
+mathjax: true
+---
+
+## 我为什么要写这个
+
+我一直在西安做DBA，从最开始玩Oracle到现在使用MySQL，最大的感觉就是--西安这地方搞IT就是做外包或者去华为。当然MySQL在西北地区确实不太受到重视，因为互联网企业很少很少，由此带来的就是大部分IT从业者对MySQL知之甚少，有很多萌新想多一门手艺，但是却迷失在一大票的从开始到精通这种烂书中。
+
+因此，作为一个坚守在西北的老年MySQL DBA，我有那么一点冲动，想要写点入门的Guide。
+
+以上。
+
+## MySQL的安装方式
+
+MySQL作为一款优秀的开源软件，这几年在Oracle的加持下愈发的成熟与优秀，尤其是MySQL8.0即将到来，引擎和Server结合更加紧密，可以认为MySQL是一个小型的Oracle了。
+
+MySQL平时我们用的比较多的安装方式无非是源码编译，二进制文件安装或者RPM安装。源码编译太慢，而且大部分小型企业也并不需要定制化什么，也没有那个代码能力，因此不谈这个；二进制文件是Oracle官方编译好的，直接拿来，改改环境变量的PATH，直接就可以使用，今天也不提；RPM是RHEL/CentOS一系Linux最主流的软件包管理方式，一个命令就能完成安装和升级，今天就来谈这种方式。
+
+## 使用Docker搭建一个Linux环境
+
+大部分人手头的电脑都是Windows，当然现在越来越多的人都用了Mac，不过这些系统都可以安装Docker。假设Windows上已经装好了Docker，那么执行这个命令就可以安装一个CentOS系统：
+
+```bash
+docker pull centos
+```
+
+当然很慢很慢，记得利用国内的加速器，我推荐daocloud。
+
+```bash
+C:\Users\18691>docker images
+```
+
+|REPOSITORY|          TAG|                 IMAGE ID|            CREATED  |           SIZE|
+|--|--|--|--|--|
+|centos   |           latest   |           e934aafc2206    |    16 hours ago   |     199MB|
+|hello-world    |     latest   |           f2a91732366c  |      4 months ago  |      1.85kB|
+
+这样很简单的就装好了一台测试用的Linux，比用虚拟机快多了，而且也省了装terminal客户端，cmd就能搞定。
+
+下面执行一个命令：
+
+```bash
+docker run -ti e934 /bash/bash
+```
+
+e934是我的centos的id的前四位。
+
+这样一来就进入了Linux的terminal，接下来就能自由的使用Linux命令了。
+
+## MySQL包的准备
+
+官方下载MySQL的rpm包非常慢，因此我推荐一个国内的镜像网站：
+
+[中科大开源镜像](http://mirrors.ustc.edu.cn/)
+
+执行这个命令拿到MySQL rpm的bundle包：
+
+```bash
+wget http://mirrors.ustc.edu.cn/mysql-ftp/Downloads/MySQL-5.7/mysql-5.7.21-1.el7.x86_64.rpm-bundle.tar
+```
+
+其实这个包里很多是用不到的，我们执行这个命令安装MySQL：
+
+```bash
+rpm -ivh mysql-community-server-5.7.21-1.el7.x86_64.rpm  mysql-community-client-5.7.21-1.el7.x86_64.rpm  mysql-community-libs-5.7.21-1.el7.x86_64.rpm  mysql-community-common-5.7.21-1.el7.x86_64.rpm
+```
+
+安装结束之后这些都可以删掉了，占不少空间。
+
+接下来很重要，去这个网站上填一点资料，生成一份MySQL配置文件：
+
+[老叶茶馆](http://imysql.com/my-cnf-wizard.html)
+
+## 开始配置
+
+修改/etc/my.cnf文件，将刚才生成的my.cnf内容粘贴进去.
+
+注意，文件里有不少路径，需要手动创建，比如我的配置文件里有这几个目录要创建：
+
+```bash
+mkdir -p /data/mysql 
+```
+
+还有一点要注意的，文件里默认有basedir，删掉，因为是RPM安装，basedir并不在默认生成的路径。
+
+新建mysql用户和组：
+
+```bash
+groupadd mysql
+useradd -g mysql mysql
+chown -R mysql.mysql /data/mysql
+```
+
+现在初始化：
+
+```bash
+mysqld --defaults-file=/etc/my.cnf --initialize --user=mysql --datadir=/data/mysql
+```
+
+初始化结束后你会发现/data/mysql里有很多文件生成了，这里有个很重要的error.log文件，在里面找随机密码：
+
+```bash
+2018-04-07T13:39:05.129141Z 1 [Note] A temporary password is generated for root@localhost: g#uJquogq6d4
+```
+
+下面就可以启动MySQL了：
+
+```bash
+mysqld --user=mysql --datadir=/data/mysql/ &
+```
+
+现在利用随机密码登录：
+
+
+```bash
+mysql -uroot -pg#uJquogq6d4
+```
+
+此时什么操作都不能做，只能改密码：
+
+```bash
+set password=PASSWORD('123456');
+flush privileges;
+```
+
+退出，用最新的密码登录即可。
+
+## 结束
+
+至此，MySQL测试实例就安装好了。
