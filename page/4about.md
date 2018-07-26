@@ -15,9 +15,6 @@ MySQL是我的心头好，读过一些源码，处理过一些问题，仍然在
 
 最爱读书，各种书都喜欢。
 
-
-* 2009.7 骄傲的从西北工业大学毕业
-
 ## 联系我
 
 * GitHub：[zhiyoucai](https://github.com/zhiyoucai)
