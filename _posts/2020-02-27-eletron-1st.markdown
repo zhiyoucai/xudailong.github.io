@@ -1,0 +1,125 @@
+---
+layout: post
+title:  "Electron学习笔记（一）"
+date:   2018-3-19 18:36:35
+categories: Electron
+tags: Electron
+excerpt: Electron学习笔记
+mathjax: true
+---
+
+# 1. 环境准备
+
+开发首选的操作系统应该是MacOS和Linux，考虑到界面的美观，我推荐使用MacOS。
+
+Electron是基于Node.js的，因此应该首先在机器上安装Node.js，安装的过程不是本文的重点，安装结束之后输入这两个命令验证是否成功：
+
+```bash
+node -v
+npm -v
+```
+
+如果能正确打印出node和npm的版本号，那么开发环境就已经准备好了。
+
+开发推荐使用VS Code，当然WebStorm和Atom也是没有问题的。VS Code和Atom也都是用Electron开发的。
+
+# 2. 开发一个简单的示例
+
+任何一种开发语言在学习的时候都要写一个Hello World，这是程序员的标准做法，现在我们用Electron开发一个。
+
+首先需要新建一个目录，这个目录用于保存本示例工程的代码。在该目录下，打开命令行输入下面的命令：
+
+```bash
+npm init
+```
+
+会出现很多交互式的选项，这些选项暂时不需要关心，只需要一路下一步就可以了。在完成了初始化之后，目录中会出现一个叫做package.json的文件，这个文件记录了一些基本信息，也定义了主程序入口。下面是这个文件的样例：
+
+```json
+{
+    "name": "demo",
+
+    "version": "1.0.0",
+
+    "description": "",
+
+    "main": "index.js",
+
+    "scripts": {
+        "start": "electron ."
+
+    },
+    "author": "",
+
+    "license": "ISC",
+
+    "devDependencies": {
+        "electron": "^8.0.1"
+
+    }
+}
+```
+
+重要的就是中间那个main属性，就是所谓的主进程入口。同时这里也定义好了启动脚本，即启动electron。
+
+官方给出了一个简单的样例，我们照抄如下，首先是index.js文件，内容如下：
+
+```javascript
+const { app, BrowserWindow } = require('electron')
+
+function createWindow () {   
+  // 创建浏览器窗口
+  let win = new BrowserWindow({
+    width: 800,
+    height: 600,
+    webPreferences: {
+      nodeIntegration: true
+    }
+  })
+
+  // 加载index.html文件
+  win.loadFile('index.html')
+}
+
+app.whenReady().then(createWindow)
+```
+
+这个文件做什么的，代码注释里已经说的很清楚了，就是创建一个800X600的窗口，然后加载index.html文件。
+
+这是index.html文件的内容，只要打印一个Hello World就可以了。
+
+```html
+<!DOCTYPE html>
+
+<html>
+<head>
+<meta charset="UTF-8">
+
+<title>Hello World!</title>
+<!-- https://electronjs.org/docs/tutorial/security#csp-meta-tag -->
+<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';" />
+
+</head>
+<body>
+<h1>Hello World!</h1>
+We are using node <script>document.write(process.versions.node)</script>,
+
+Chrome <script>document.write(process.versions.chrome)</script>,
+
+and Electron <script>document.write(process.versions.electron)</script>.
+
+</body>
+</html>
+```
+
+到这里为止编码工作就结束了，关键的文件只有三个，但是注意，按照我们之前的配置，现在直接用```npm start```去启动是会失败的。因为我们还没有装electron。
+
+接下来我们还是在这个目录下面，执行这个命令：
+
+```bash
+npm install --save-dev electron
+```
+
+结束之后没有报错，我们就能用```npm start```去启动我们的工程了。
+
+以上的安装方法是Electron官方推荐的安装方法。这种办法将Electron作为我们开发的app中的依赖项，这样一来我们可以在不同的app中使用不同版本的Electron，更加灵活自由。
